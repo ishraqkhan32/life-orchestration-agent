@@ -389,13 +389,21 @@ class LifeManagementApp:
         top_frame.pack(fill=tk.X, padx=10, pady=10)
 
         ttk.Label(top_frame, text="Start of Week (YYYY-MM-DD):").pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(top_frame, text="⟵", command=self.goto_previous_week, width=0.25).pack(side=tk.LEFT)
+
+        
         self.week_start_var = tk.StringVar()
         # Set week_start_var to Monday of current week
         today = date.today()
         monday = today - timedelta(days=today.weekday())
         self.week_start_var.set(monday.isoformat())
         self.week_start_entry = ttk.Entry(top_frame, textvariable=self.week_start_var, width=12)
-        self.week_start_entry.pack(side=tk.LEFT, padx=(0, 10))
+        self.week_start_entry.pack(side=tk.LEFT)
+
+        # Add Previous and Next Week buttons
+        
+        ttk.Button(top_frame, text="⟶", command=self.goto_next_week, width=0.25).pack(side=tk.LEFT, padx=(0, 10))
+
         ttk.Button(top_frame, text="Set Week", command=self.update_week_dates).pack(side=tk.LEFT)
         ttk.Button(top_frame, text="Save Week", command=self.save_weekly_planning).pack(side=tk.LEFT, padx=(10, 0))
 
@@ -421,10 +429,8 @@ class LifeManagementApp:
             self.weekday_date_vars.append(date_var)
             text_widget = tk.Text(days_frame, height=15, wrap=tk.WORD, undo=True, insertbackground="black")
             text_widget.grid(row=2, column=col, padx=0, pady=0, sticky="nsew")
-            
             # Bind autosave to text changes
             text_widget.bind('<KeyRelease>', self.on_text_change(f'weekly_{col}', self.save_weekly_planning))
-            
             self.weekday_text_widgets.append(text_widget)
 
         # Create table for weekly planning if not exists
@@ -482,6 +488,28 @@ class LifeManagementApp:
             text_widget.delete(1.0, tk.END)
             if i in data:
                 text_widget.insert(1.0, data[i])
+
+    def goto_previous_week(self):
+        """Go to the previous week (Monday) and update the view"""
+        from datetime import datetime, timedelta
+        try:
+            current_monday = datetime.strptime(self.week_start_var.get(), "%Y-%m-%d").date()
+            prev_monday = current_monday - timedelta(days=7)
+            self.week_start_var.set(prev_monday.isoformat())
+            self.update_week_dates()
+        except Exception as e:
+            messagebox.showerror("Error", f"Could not go to previous week: {e}")
+
+    def goto_next_week(self):
+        """Go to the next week (Monday) and update the view"""
+        from datetime import datetime, timedelta
+        try:
+            current_monday = datetime.strptime(self.week_start_var.get(), "%Y-%m-%d").date()
+            next_monday = current_monday + timedelta(days=7)
+            self.week_start_var.set(next_monday.isoformat())
+            self.update_week_dates()
+        except Exception as e:
+            messagebox.showerror("Error", f"Could not go to next week: {e}")
 
     def load_data(self):
         """Load all data from database"""
