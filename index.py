@@ -427,7 +427,7 @@ class LifeManagementApp:
             date_entry = ttk.Entry(days_frame, textvariable=date_var, width=10, justify="center")
             date_entry.grid(row=1, column=col, padx=0, pady=0, sticky="ew")
             self.weekday_date_vars.append(date_var)
-            text_widget = tk.Text(days_frame, height=15, wrap=tk.WORD, undo=True, insertbackground="black")
+            text_widget = tk.Text(days_frame, height=15, wrap=tk.WORD, undo=True, insertbackground="grey")
             text_widget.grid(row=2, column=col, padx=0, pady=0, sticky="nsew")
             # Bind autosave to text changes
             text_widget.bind('<KeyRelease>', self.on_text_change(f'weekly_{col}', self.save_weekly_planning))
