@@ -1,16 +1,12 @@
-import tkinter as tk
-from tkinter import ttk, messagebox, scrolledtext
-import sqlite3
-import json
-import uuid
-from datetime import datetime, date
-import base64
 import os
-from PIL import Image, ImageTk
-import requests
-from typing import Optional, List, Dict
+import sys
+import uuid
+import sqlite3
+import tkinter as tk
 import tkinter.simpledialog as simpledialog
-import platform
+from tkinter import ttk, messagebox, scrolledtext
+from PIL import Image, ImageTk
+from datetime import datetime, date, timedelta
 
 class LifeManagementApp:
     def __init__(self):
@@ -88,14 +84,15 @@ class LifeManagementApp:
         # Journal entries table
         self.cursor.execute('''
             CREATE TABLE IF NOT EXISTS journal_entries (
-                date TEXT PRIMARY KEY,
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                entry_datetime DATETIME,
                 content TEXT,
                 feedback TEXT
             )
         ''')
-        
+                            
         self.conn.commit()
-    
+
     def set_app_icon(self):
         """Set the application icon (window and Dock)"""
         try:
@@ -106,20 +103,6 @@ class LifeManagementApp:
                 icon_photo = ImageTk.PhotoImage(icon_image)
                 self.root.iconphoto(True, icon_photo)
                 self.icon_image = icon_photo  # Prevent garbage collection
-
-            # Set Dock icon on macOS using .icns file and pyobjc
-            if platform.system() == "Darwin":
-                icns_path = os.path.join(os.path.dirname(__file__), "assets", "icon.icns")
-                if os.path.exists(icns_path):
-                    try:
-                        from AppKit import NSApplication, NSImage
-                        from Foundation import NSURL
-                        app = NSApplication.sharedApplication()
-                        nsimage = NSImage.alloc().initByReferencingFile_(icns_path)
-                        if nsimage:
-                            app.setApplicationIconImage_(nsimage)
-                    except Exception as e:
-                        print(f"Could not set Dock icon: {e}")
 
             # Optionally set icon name
             self.root.iconname("Orchestration Agent")
@@ -161,6 +144,7 @@ class LifeManagementApp:
         self.create_tasks_tab()
         self.create_weekly_planning_tab()
         self.create_journal_tab()
+        # self.create_gene_analysis_tab()  # Add this line
     
     def create_dashboard_tab(self):
         """Create the dashboard tab with priorities, affirmations, and vision board"""
@@ -340,19 +324,19 @@ class LifeManagementApp:
         self.date_entry.pack(side=tk.LEFT, padx=(0, 10))
         self.date_entry.bind('<Return>', self.load_journal_entry)
         
-        ttk.Button(date_frame, text="Load Entry", 
-                  command=self.load_journal_entry).pack(side=tk.LEFT)
-        
+        # Time entry widget
+        ttk.Label(date_frame, text="Time:").pack(side=tk.LEFT, padx=(0, 5))
+        self.journal_time = tk.StringVar()
+        self.time_entry = ttk.Entry(date_frame, textvariable=self.journal_time, width=8)
+        self.time_entry.pack(side=tk.LEFT, padx=(0, 10))
+        # Move Submit Reflection button inline, to the right of time entry
+        self.submit_button = ttk.Button(date_frame, text="Submit", command=self.submit_journal)
+        self.submit_button.pack(side=tk.LEFT, padx=(0, 10))
+
         # Journal input
         ttk.Label(left_frame, text="Journal Reflection:").pack(anchor=tk.W, pady=(0, 5))
         self.journal_text = scrolledtext.ScrolledText(left_frame, height=15, wrap=tk.WORD, undo=True)
         self.journal_text.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
-        
-        # Bind autosave to text changes
-        self.journal_text.bind('<KeyRelease>', self.on_text_change('journal', self.auto_save_journal))
-        
-        ttk.Button(left_frame, text="Submit Reflection", 
-                  command=self.submit_journal).pack(pady=5)
         
         # Feedback section
         feedback_frame = ttk.LabelFrame(left_frame, text="AI Feedback", padding=10)
@@ -362,25 +346,31 @@ class LifeManagementApp:
                                                       state=tk.DISABLED, undo=True)
         self.feedback_text.pack(fill=tk.BOTH, expand=True)
         
+        # Right side - Journal history
+        right_frame = ttk.LabelFrame(journal_frame, text="Journal History", padding=10)
+        right_frame.grid(row=0, column=1, sticky="nsew", padx=(5, 10), pady=10)
+
+        # Date selector for history
+        history_date_frame = ttk.Frame(right_frame)
+        history_date_frame.pack(fill=tk.X, pady=(0, 5))
+        self.history_date_var = tk.StringVar(value=date.today().isoformat())
+        
+        
+        ttk.Label(history_date_frame, text="History Date (YYYY-MM-DD):").pack(side=tk.LEFT, padx=(0, 5))
+        self.history_date_entry = ttk.Entry(history_date_frame, textvariable=self.history_date_var, width=12)
+        self.history_date_entry.pack(side=tk.LEFT)
+        
+        ttk.Button(history_date_frame, text="⟵", command=self.goto_prev_journal_date, width=0.25).pack(side=tk.LEFT) # Prev button
+        ttk.Button(history_date_frame, text="⟶", command=self.goto_next_journal_date, width=0.25).pack(side=tk.LEFT) # Next button
+
         # History listbox with scrollbar
         history_list_frame = ttk.Frame(right_frame)
         history_list_frame.pack(fill=tk.BOTH, expand=True)
-        
-        self.history_listbox = tk.Listbox(history_list_frame, selectmode=tk.SINGLE)
-        history_scrollbar = ttk.Scrollbar(history_list_frame, orient=tk.VERTICAL)
-        self.history_listbox.config(yscrollcommand=history_scrollbar.set)
-        history_scrollbar.config(command=self.history_listbox.yview)
-        
-        self.history_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        history_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        
-        self.history_listbox.bind('<Double-Button-1>', self.load_selected_entry)
-    
+        self.history_text = scrolledtext.ScrolledText(history_list_frame, wrap=tk.WORD, state=tk.DISABLED, height=20)
+        self.history_text.pack(fill=tk.BOTH, expand=True)
+
     def create_weekly_planning_tab(self):
         """Create the weekly planning tab with 7 columns for each day of the week"""
-        import calendar
-        from datetime import timedelta, date
-
         weekly_frame = ttk.Frame(self.notebook)
         self.notebook.add(weekly_frame, text="Weekly Planning")
 
@@ -391,25 +381,27 @@ class LifeManagementApp:
         ttk.Label(top_frame, text="Start of Week (YYYY-MM-DD):").pack(side=tk.LEFT, padx=(0, 5))
         ttk.Button(top_frame, text="⟵", command=self.goto_previous_week, width=0.25).pack(side=tk.LEFT)
 
-        
         self.week_start_var = tk.StringVar()
-        # Set week_start_var to Monday of current week
         today = date.today()
         monday = today - timedelta(days=today.weekday())
         self.week_start_var.set(monday.isoformat())
         self.week_start_entry = ttk.Entry(top_frame, textvariable=self.week_start_var, width=12)
         self.week_start_entry.pack(side=tk.LEFT)
 
-        # Add Previous and Next Week buttons
-        
         ttk.Button(top_frame, text="⟶", command=self.goto_next_week, width=0.25).pack(side=tk.LEFT, padx=(0, 10))
-
         ttk.Button(top_frame, text="Set Week", command=self.update_week_dates).pack(side=tk.LEFT)
-        ttk.Button(top_frame, text="Save Week", command=self.save_weekly_planning).pack(side=tk.LEFT, padx=(10, 0))
 
-        # Frame for the 7 columns
+        # Weekly Intentions (top, right of week selector)
+        intentions_frame = ttk.Frame(top_frame)
+        intentions_frame.pack(side=tk.LEFT, padx=(20, 0), fill=tk.X, expand=True)
+        ttk.Label(intentions_frame, text="Weekly Intentions:").pack(side=tk.LEFT, padx=(0, 5))
+        self.weekly_intentions_text = tk.Text(intentions_frame, height=6, width=40, wrap=tk.WORD, undo=True)
+        self.weekly_intentions_text.pack(side=tk.RIGHT, fill=tk.X, expand=True)
+        self.weekly_intentions_text.bind('<KeyRelease>', self.on_text_change('weekly_intentions', self.save_weekly_planning))
+
+        # Frame for the 7 columns (full width below)
         days_frame = ttk.Frame(weekly_frame)
-        days_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        days_frame.pack(fill=tk.BOTH, expand=True, padx=10)
         days_frame.grid_rowconfigure(0, weight=0)
         days_frame.grid_rowconfigure(1, weight=0)
         days_frame.grid_rowconfigure(2, weight=1)
@@ -449,7 +441,6 @@ class LifeManagementApp:
 
     def update_week_dates(self):
         """Update the date entries for each day of the week based on the start date and load saved data"""
-        from datetime import datetime, timedelta
         try:
             input_date = datetime.strptime(self.week_start_var.get(), "%Y-%m-%d").date()
             # Find the previous Monday (or the same day if it's Monday)
@@ -466,32 +457,39 @@ class LifeManagementApp:
         self.load_weekly_planning()
 
     def save_weekly_planning(self):
-        """Save the weekly planning text for each day into the database"""
+        """Save the weekly planning text for each day and intentions into the database"""
         week_start = self.week_start_var.get()
+        intentions = self.weekly_intentions_text.get(1.0, tk.END).strip()
         for i, text_widget in enumerate(self.weekday_text_widgets):
             content = text_widget.get(1.0, tk.END).strip()
             self.cursor.execute(
-                "INSERT OR REPLACE INTO weekly_planning (week_start, day_index, content) VALUES (?, ?, ?)",
-                (week_start, i, content)
+                "INSERT OR REPLACE INTO weekly_planning (week_start, day_index, content, weekly_intentions) VALUES (?, ?, ?, ?)",
+                (week_start, i, content, intentions)
             )
         self.conn.commit()
 
     def load_weekly_planning(self):
-        """Load the weekly planning text for each day from the database"""
+        """Load the weekly planning text for each day and intentions from the database"""
         week_start = self.week_start_var.get()
         self.cursor.execute(
-            "SELECT day_index, content FROM weekly_planning WHERE week_start = ?",
+            "SELECT day_index, content, weekly_intentions FROM weekly_planning WHERE week_start = ?",
             (week_start,)
         )
-        data = {row[0]: row[1] for row in self.cursor.fetchall()}
+        data = {row[0]: (row[1], row[2]) for row in self.cursor.fetchall()}
+        intentions = None
         for i, text_widget in enumerate(self.weekday_text_widgets):
             text_widget.delete(1.0, tk.END)
             if i in data:
-                text_widget.insert(1.0, data[i])
+                text_widget.insert(1.0, data[i][0])
+                if data[i][1]:
+                    intentions = data[i][1]
+        # Set intentions (if any row has it, set it)
+        self.weekly_intentions_text.delete(1.0, tk.END)
+        if intentions:
+            self.weekly_intentions_text.insert(1.0, intentions)
 
     def goto_previous_week(self):
         """Go to the previous week (Monday) and update the view"""
-        from datetime import datetime, timedelta
         try:
             current_monday = datetime.strptime(self.week_start_var.get(), "%Y-%m-%d").date()
             prev_monday = current_monday - timedelta(days=7)
@@ -502,7 +500,6 @@ class LifeManagementApp:
 
     def goto_next_week(self):
         """Go to the next week (Monday) and update the view"""
-        from datetime import datetime, timedelta
         try:
             current_monday = datetime.strptime(self.week_start_var.get(), "%Y-%m-%d").date()
             next_monday = current_monday + timedelta(days=7)
@@ -516,7 +513,7 @@ class LifeManagementApp:
         self.load_priorities()
         self.load_affirmations()
         self.load_tasks()
-        self.load_journal_history()
+        self.load_journal_history_for_date()
     
     def load_priorities(self):
         """Load life priorities from database"""
@@ -668,37 +665,43 @@ class LifeManagementApp:
         self.conn.commit()
         self.load_tasks()
     
-    def auto_save_journal(self):
-        """Auto-save journal content without generating feedback"""
-        journal_date = self.journal_date.get()
-        content = self.journal_text.get(1.0, tk.END).strip()
-        
-        if content:
-            # Save content without feedback (feedback will be generated on manual submit)
-            self.cursor.execute(
-                "INSERT OR REPLACE INTO journal_entries (date, content) VALUES (?, ?)",
-                (journal_date, content)
-            )
-            self.conn.commit()
-    
     def submit_journal(self):
         """Submit journal reflection and get AI feedback"""
         journal_date = self.journal_date.get()
-        content = self.journal_text.get(1.0, tk.END).strip()
+        journal_time = self.journal_time.get().strip().upper()
+        # If no time is provided, use the current time in HH:MMAM/PM format
+        if not journal_time:
+            now = datetime.now()
+            hour = now.strftime('%I')  # 12-hour format with leading zero
+            minute = now.strftime('%M')
+            ampm = now.strftime('%p')
+            journal_time = f"{hour}:{minute}{ampm}"
+        # Validate time format: e.g., 09:30AM or 12:45PM
+        if not re.match(r'^(0[1-9]|1[0-2]):[0-5][0-9](AM|PM)$', journal_time):
+            messagebox.showerror("Invalid Time", "Please enter time in the format HH:MMAM or HH:MMPM (e.g., 09:30AM)")
+            return
         
+        # Generate datetime object from journal_date and journal_time
+        entry_datetime = datetime.strptime(f"{journal_date} {journal_time}", "%Y-%m-%d %I:%M%p")
+
+        content = self.journal_text.get(1.0, tk.END).strip()
         if not content:
             messagebox.showwarning("Warning", "Please write a reflection first.")
             return
-        
+
         # Generate feedback
         feedback = self.generate_feedback(content)
         
         # Save to database
         self.cursor.execute(
-            "INSERT OR REPLACE INTO journal_entries (date, content, feedback) VALUES (?, ?, ?)",
-            (journal_date, content, feedback)
+            "INSERT OR REPLACE INTO journal_entries (entry_datetime, content, feedback) VALUES (?, ?, ?)",
+            (entry_datetime, content, feedback)
         )
         self.conn.commit()
+        
+        # Clear time and journal reflection after submit
+        self.journal_time.set("")
+        self.journal_text.delete(1.0, tk.END)
         
         # Display feedback
         self.feedback_text.config(state=tk.NORMAL)
@@ -707,8 +710,7 @@ class LifeManagementApp:
         self.feedback_text.config(state=tk.DISABLED)
         
         # Refresh history
-        self.load_journal_history()
-        messagebox.showinfo("Success", "Journal reflection submitted successfully!")
+        self.load_journal_history_for_date()
     
     def generate_feedback(self, reflection: str) -> str:
         """Generate AI feedback for journal reflection"""
@@ -754,7 +756,7 @@ class LifeManagementApp:
         journal_date = self.journal_date.get()
         
         self.cursor.execute(
-            "SELECT content, feedback FROM journal_entries WHERE date = ?",
+            "SELECT content, feedback FROM journal_entries WHERE date(entry_datetime) = ?",
             (journal_date,)
         )
         result = self.cursor.fetchone()
@@ -773,34 +775,28 @@ class LifeManagementApp:
             self.feedback_text.config(state=tk.NORMAL)
             self.feedback_text.delete(1.0, tk.END)
             self.feedback_text.config(state=tk.DISABLED)
-    
-    def load_journal_history(self):
-        """Load journal history in the sidebar"""
-        self.history_listbox.delete(0, tk.END)
-        
+
+    def load_journal_history_for_date(self):
+        """Always show journal history for the date in the history date entry, in reverse chronological order"""
+        date_str = self.history_date_var.get().strip() or date.today().isoformat()
+        self.history_text.config(state=tk.NORMAL)
+        self.history_text.delete(1.0, tk.END)
         self.cursor.execute(
-            "SELECT date, content FROM journal_entries ORDER BY date DESC"
+            "SELECT entry_datetime, content FROM journal_entries WHERE date(entry_datetime) = ? ORDER BY entry_datetime DESC",
+            (date_str,)
         )
         entries = self.cursor.fetchall()
-        
-        for entry_date, content in entries:
-            preview = content[:50] + "..." if len(content) > 50 else content
-            display_text = f"{entry_date}: {preview}"
-            self.history_listbox.insert(tk.END, display_text)
-    
-    def load_selected_entry(self, event):
-        """Load selected journal entry from history"""
-        selection = self.history_listbox.curselection()
-        if not selection:
-            return
-        
-        # Get the date from the selected item
-        selected_text = self.history_listbox.get(selection[0])
-        entry_date = selected_text.split(":")[0]
-        
-        self.journal_date.set(entry_date)
-        self.load_journal_entry()
-    
+
+        history_buffer = []
+        for entry_datetime, content in entries:
+            dt = datetime.fromisoformat(entry_datetime)
+            display_text = f"{dt.strftime('%I:%M%p')}\n{content}\n-----\n\n"
+            history_buffer.append(display_text)
+        self.history_text.insert(tk.END, ''.join(history_buffer))
+        self.history_text.config(state=tk.DISABLED)
+
+    # Double-click selection is not needed for ScrolledText history
+
     def edit_task(self, event):
         # Get the index of the clicked item
         widget = event.widget
@@ -820,6 +816,42 @@ class LifeManagementApp:
             widget.insert(index, new_text)
             # TODO: Update your database or data structure here as well!
     
+    def get_sorted_journal_dates(self):
+        self.cursor.execute("SELECT DISTINCT date(entry_datetime) FROM journal_entries ORDER BY entry_datetime DESC")
+        return [row[0] for row in self.cursor.fetchall()]
+
+    def goto_prev_journal_date(self):
+        """Go to the previous available journal date and show entries for that date"""
+        current = self.history_date_var.get().strip()
+        dates = self.get_sorted_journal_dates()
+        if not dates:
+            return
+        try:
+            idx = dates.index(current)
+            if idx + 1 < len(dates):
+                self.history_date_var.set(dates[idx + 1])
+                self.load_journal_history_for_date()
+        except ValueError:
+            # If current date not found, go to the most recent
+            self.history_date_var.set(dates[0])
+            self.load_journal_history_for_date()
+
+    def goto_next_journal_date(self):
+        """Go to the next available journal date and show entries for that date"""
+        current = self.history_date_var.get().strip() or date.today().isoformat()
+        dates = self.get_sorted_journal_dates()
+        if not dates:
+            return
+        try:
+            idx = dates.index(current)
+            if idx - 1 >= 0:
+                self.history_date_var.set(dates[idx - 1])
+                self.load_journal_history_for_date()
+        except ValueError:
+            # If current date not found, go to the most recent
+            self.history_date_var.set(dates[0])
+            self.load_journal_history_for_date()
+
     def run(self):
         """Start the application"""
         try:
@@ -829,9 +861,6 @@ class LifeManagementApp:
             for job_id in self.autosave_jobs.values():
                 self.root.after_cancel(job_id)
             self.conn.close()
-
-# Add import for IO operations
-import io
 
 def main():
     """Main function to run"""
